@@ -3,12 +3,12 @@ import { Mesh, Vector3 } from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 
 interface GeometricShapeProps {
-  type: 'sphere' | 'cube' | 'cylinder';
+  type: 'sphere' | 'cube' | 'cylinder' | 'pyramid';
   position: [number, number, number];
   color: string;
   opacity?: number;
   visible?: boolean;
-  onClick: (screenPosition: { x: number; y: number }) => void;
+  onClick: (screenPosition: { x: number; y: number }, worldPosition: Vector3) => void;
 }
 
 const GeometricShape = ({ type, position, color, opacity = 1, visible = true, onClick }: GeometricShapeProps) => {
@@ -27,14 +27,16 @@ const GeometricShape = ({ type, position, color, opacity = 1, visible = true, on
     event.stopPropagation();
     
     if (meshRef.current) {
-      const vector = new Vector3();
-      meshRef.current.getWorldPosition(vector);
+      const worldPos = new Vector3();
+      meshRef.current.getWorldPosition(worldPos);
+      
+      const vector = worldPos.clone();
       vector.project(camera);
       
       const x = (vector.x * 0.5 + 0.5) * gl.domElement.clientWidth;
       const y = (-vector.y * 0.5 + 0.5) * gl.domElement.clientHeight;
       
-      onClick({ x, y });
+      onClick({ x, y }, worldPos);
     }
   };
 
@@ -46,12 +48,14 @@ const GeometricShape = ({ type, position, color, opacity = 1, visible = true, on
         return <boxGeometry args={[1.3, 1.3, 1.3]} />;
       case 'cylinder':
         return <cylinderGeometry args={[0.6, 0.6, 1.5, 64]} />;
+      case 'pyramid':
+        return <coneGeometry args={[0.8, 1.4, 4]} />;
       default:
         return <boxGeometry args={[1, 1, 1]} />;
     }
   };
 
-  if (!visible) return null;
+  if (!visible || opacity <= 0) return null;
 
   return (
     <mesh

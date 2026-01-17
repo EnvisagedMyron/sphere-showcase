@@ -1,6 +1,7 @@
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Environment } from '@react-three/drei';
-import { Suspense, useState, useEffect, useRef } from 'react';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
+import { Environment } from '@react-three/drei';
+import { Suspense, useState, useEffect, useRef, useCallback } from 'react';
+import { Vector3 } from 'three';
 import GeometricShape from './GeometricShape';
 import InfoModal from './InfoModal';
 import { Slider } from './ui/slider';
@@ -9,67 +10,103 @@ interface SelectedObject {
   name: string;
   description: string;
   position: { x: number; y: number };
+  shapePosition: { x: number; y: number };
 }
+
+// Custom camera controls component
+const CameraControls = ({ selectedObject }: { selectedObject: SelectedObject | null }) => {
+  const { camera, gl } = useThree();
+  const isDragging = useRef(false);
+  const lastMouse = useRef({ x: 0, y: 0 });
+  const spherical = useRef({ theta: 0, phi: Math.PI / 2, radius: 8 });
+
+  const updateCamera = useCallback(() => {
+    const { theta, phi, radius } = spherical.current;
+    camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
+    camera.position.y = radius * Math.cos(phi);
+    camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
+    camera.lookAt(0, 0, 0);
+  }, [camera]);
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button === 0 && !e.shiftKey) {
+        isDragging.current = true;
+        lastMouse.current = { x: e.clientX, y: e.clientY };
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+
+      const deltaX = e.clientX - lastMouse.current.x;
+      const deltaY = e.clientY - lastMouse.current.y;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+
+      // Horizontal movement = rotate horizontally
+      spherical.current.theta += deltaX * 0.01;
+
+      // Vertical movement = move camera up/down (change phi)
+      spherical.current.phi -= deltaY * 0.01;
+      spherical.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.current.phi));
+
+      updateCamera();
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      spherical.current.radius += e.deltaY * 0.01;
+      spherical.current.radius = Math.max(3, Math.min(20, spherical.current.radius));
+      updateCamera();
+    };
+
+    canvas.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('wheel', handleWheel);
+
+    updateCamera();
+
+    return () => {
+      canvas.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      canvas.removeEventListener('wheel', handleWheel);
+    };
+  }, [gl, updateCamera]);
+
+  return null;
+};
 
 const Scene3D = () => {
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
-  const [altPressed, setAltPressed] = useState(false);
-  const [visibilityValue, setVisibilityValue] = useState([100]);
-  const controlsRef = useRef<any>(null);
+  const [selectedShapeName, setSelectedShapeName] = useState<string | null>(null);
+  const [basicVisibility, setBasicVisibility] = useState([100]);
+  const [pyramidVisibility, setPyramidVisibility] = useState([100]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') {
-        setAltPressed(true);
-      }
-    };
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') {
-        setAltPressed(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-
-  // Update orbit controls when alt state changes
-  useEffect(() => {
-    if (controlsRef.current) {
-      if (altPressed) {
-        controlsRef.current.minPolarAngle = 0;
-        controlsRef.current.maxPolarAngle = Math.PI;
-      } else {
-        controlsRef.current.minPolarAngle = Math.PI / 2;
-        controlsRef.current.maxPolarAngle = Math.PI / 2;
-      }
-    }
-  }, [altPressed]);
-
-  const handleShapeClick = (name: string, screenPosition: { x: number; y: number }) => {
+  const handleShapeClick = (name: string, screenPosition: { x: number; y: number }, worldPosition: Vector3) => {
     setSelectedObject({
       name,
       description: 'hello',
       position: screenPosition,
+      shapePosition: screenPosition,
     });
+    setSelectedShapeName(name);
   };
 
   const closeModal = () => {
     setSelectedObject(null);
+    setSelectedShapeName(null);
   };
 
-  // Calculate visibility for each object based on slider
-  const value = visibilityValue[0];
-  
-  const getObjectState = (index: number): { opacity: number; visible: boolean } => {
-    // Object 1 (Sphere): visible from 33-100
-    // Object 2 (Cube): visible from 66-100  
-    // Object 3 (Cylinder): visible from 100
+  // Calculate visibility for basic shapes (sphere, cube, cylinder)
+  const getBasicObjectState = (index: number): { opacity: number; visible: boolean } => {
+    const value = basicVisibility[0];
     const thresholds = [33.33, 66.66, 100];
     const threshold = thresholds[index];
     const prevThreshold = index > 0 ? thresholds[index - 1] : 0;
@@ -77,7 +114,6 @@ const Scene3D = () => {
     if (value >= threshold) {
       return { opacity: 1, visible: true };
     } else if (value > prevThreshold) {
-      // Transitioning - calculate opacity
       const range = threshold - prevThreshold;
       const progress = (value - prevThreshold) / range;
       return { opacity: progress, visible: true };
@@ -85,9 +121,41 @@ const Scene3D = () => {
     return { opacity: 0, visible: false };
   };
 
-  const sphereState = getObjectState(0);
-  const cubeState = getObjectState(1);
-  const cylinderState = getObjectState(2);
+  // Calculate visibility for pyramids
+  const getPyramidObjectState = (index: number): { opacity: number; visible: boolean } => {
+    const value = pyramidVisibility[0];
+    const thresholds = [33.33, 66.66, 100];
+    const threshold = thresholds[index];
+    const prevThreshold = index > 0 ? thresholds[index - 1] : 0;
+    
+    if (value >= threshold) {
+      return { opacity: 1, visible: true };
+    } else if (value > prevThreshold) {
+      const range = threshold - prevThreshold;
+      const progress = (value - prevThreshold) / range;
+      return { opacity: progress, visible: true };
+    }
+    return { opacity: 0, visible: false };
+  };
+
+  // Apply selection dimming
+  const getAdjustedOpacity = (baseOpacity: number, shapeName: string) => {
+    if (selectedShapeName && selectedShapeName !== shapeName) {
+      return Math.min(baseOpacity, 0.5);
+    }
+    return baseOpacity;
+  };
+
+  const sphereState = getBasicObjectState(0);
+  const cubeState = getBasicObjectState(1);
+  const cylinderState = getBasicObjectState(2);
+
+  const pyramid1State = getPyramidObjectState(0);
+  const pyramid2State = getPyramidObjectState(1);
+  const pyramid3State = getPyramidObjectState(2);
+
+  const basicValue = basicVisibility[0];
+  const pyramidValue = pyramidVisibility[0];
 
   return (
     <div className="relative w-full h-screen">
@@ -101,43 +169,60 @@ const Scene3D = () => {
           <pointLight position={[-10, -10, -5]} intensity={0.5} color="#4f46e5" />
           <pointLight position={[10, -10, 5]} intensity={0.5} color="#7c3aed" />
           
+          {/* Basic shapes - top row */}
           <GeometricShape
             type="sphere"
-            position={[-3, 0, 0]}
+            position={[-3, 1.5, 0]}
             color="#4f8ff7"
-            opacity={sphereState.opacity}
+            opacity={getAdjustedOpacity(sphereState.opacity, 'Sphere')}
             visible={sphereState.visible}
-            onClick={(pos) => handleShapeClick('Sphere', pos)}
+            onClick={(pos, worldPos) => handleShapeClick('Sphere', pos, worldPos)}
           />
           <GeometricShape
             type="cube"
-            position={[0, 0, 0]}
+            position={[0, 1.5, 0]}
             color="#8b5cf6"
-            opacity={cubeState.opacity}
+            opacity={getAdjustedOpacity(cubeState.opacity, 'Cube')}
             visible={cubeState.visible}
-            onClick={(pos) => handleShapeClick('Cube', pos)}
+            onClick={(pos, worldPos) => handleShapeClick('Cube', pos, worldPos)}
           />
           <GeometricShape
             type="cylinder"
-            position={[3, 0, 0]}
+            position={[3, 1.5, 0]}
             color="#22d3ee"
-            opacity={cylinderState.opacity}
+            opacity={getAdjustedOpacity(cylinderState.opacity, 'Cylinder')}
             visible={cylinderState.visible}
-            onClick={(pos) => handleShapeClick('Cylinder', pos)}
+            onClick={(pos, worldPos) => handleShapeClick('Cylinder', pos, worldPos)}
+          />
+          
+          {/* Pyramids - bottom row */}
+          <GeometricShape
+            type="pyramid"
+            position={[-3, -1.5, 0]}
+            color="#f97316"
+            opacity={getAdjustedOpacity(pyramid1State.opacity, 'Pyramid 1')}
+            visible={pyramid1State.visible}
+            onClick={(pos, worldPos) => handleShapeClick('Pyramid 1', pos, worldPos)}
+          />
+          <GeometricShape
+            type="pyramid"
+            position={[0, -1.5, 0]}
+            color="#ef4444"
+            opacity={getAdjustedOpacity(pyramid2State.opacity, 'Pyramid 2')}
+            visible={pyramid2State.visible}
+            onClick={(pos, worldPos) => handleShapeClick('Pyramid 2', pos, worldPos)}
+          />
+          <GeometricShape
+            type="pyramid"
+            position={[3, -1.5, 0]}
+            color="#eab308"
+            opacity={getAdjustedOpacity(pyramid3State.opacity, 'Pyramid 3')}
+            visible={pyramid3State.visible}
+            onClick={(pos, worldPos) => handleShapeClick('Pyramid 3', pos, worldPos)}
           />
           
           <Environment preset="city" />
-          
-          <OrbitControls
-            ref={controlsRef}
-            enablePan={true}
-            enableZoom={true}
-            enableRotate={true}
-            minDistance={3}
-            maxDistance={20}
-            minPolarAngle={Math.PI / 2}
-            maxPolarAngle={Math.PI / 2}
-          />
+          <CameraControls selectedObject={selectedObject} />
         </Suspense>
       </Canvas>
       
@@ -147,30 +232,50 @@ const Scene3D = () => {
         name={selectedObject?.name || ''}
         description={selectedObject?.description || ''}
         position={selectedObject?.position || { x: 0, y: 0 }}
+        shapePosition={selectedObject?.shapePosition || { x: 0, y: 0 }}
       />
       
-      {/* Visibility Slider */}
-      <div className="absolute top-8 left-1/2 -translate-x-1/2 glass-panel rounded-xl px-6 py-4 w-80">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-muted-foreground">Objects</span>
-          <span className="text-xs text-muted-foreground">
-            {value >= 100 ? '3' : value >= 66.66 ? '2' : value >= 33.33 ? '1' : '0'} visible
-          </span>
+      {/* Left side sliders */}
+      <div className="absolute top-1/2 left-8 -translate-y-1/2 flex flex-col gap-6">
+        {/* Basic shapes slider */}
+        <div className="glass-panel rounded-xl px-4 py-4 w-48">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Basic Shapes</span>
+            <span className="text-xs text-muted-foreground">
+              {basicValue >= 100 ? '3' : basicValue >= 66.66 ? '2' : basicValue >= 33.33 ? '1' : '0'}
+            </span>
+          </div>
+          <Slider
+            value={basicVisibility}
+            onValueChange={setBasicVisibility}
+            max={100}
+            step={1}
+            className="w-full"
+          />
         </div>
-        <Slider
-          value={visibilityValue}
-          onValueChange={setVisibilityValue}
-          max={100}
-          step={1}
-          className="w-full"
-        />
+        
+        {/* Pyramid slider */}
+        <div className="glass-panel rounded-xl px-4 py-4 w-48">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Pyramids</span>
+            <span className="text-xs text-muted-foreground">
+              {pyramidValue >= 100 ? '3' : pyramidValue >= 66.66 ? '2' : pyramidValue >= 33.33 ? '1' : '0'}
+            </span>
+          </div>
+          <Slider
+            value={pyramidVisibility}
+            onValueChange={setPyramidVisibility}
+            max={100}
+            step={1}
+            className="w-full"
+          />
+        </div>
       </div>
       
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-center">
         <p className="text-muted-foreground text-sm">
-          <span className="text-foreground font-medium">Left Click + Drag</span> to rotate • 
-          <span className="text-foreground font-medium"> Alt</span> for vertical • 
-          <span className="text-foreground font-medium"> Shift + Click</span> to pan • 
+          <span className="text-foreground font-medium">Left Click + Drag</span> to rotate/move • 
+          <span className="text-foreground font-medium"> Scroll</span> to zoom • 
           <span className="text-foreground font-medium"> Click shapes</span> for info
         </p>
       </div>
