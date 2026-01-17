@@ -7,9 +7,10 @@ interface InfoModalProps {
   name: string;
   description: string;
   position: { x: number; y: number };
+  shapePosition: { x: number; y: number };
 }
 
-const InfoModal = ({ isOpen, onClose, name, description, position }: InfoModalProps) => {
+const InfoModal = ({ isOpen, onClose, name, description, position, shapePosition }: InfoModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,16 +50,40 @@ const InfoModal = ({ isOpen, onClose, name, description, position }: InfoModalPr
     top = window.innerHeight - modalHeight - padding;
   }
 
+  // Calculate line connection point (center of modal edge closest to shape)
+  const modalCenterY = top + modalHeight / 2;
+  const lineEndX = left < position.x ? left : left + modalWidth;
+  const lineEndY = modalCenterY;
+
   return (
-    <div 
-      className="fixed inset-0 z-50"
-      onClick={onClose}
-    >
+    <>
+      {/* SVG Line connecting shape to modal */}
+      <svg 
+        className="fixed inset-0 z-40 pointer-events-none"
+        style={{ width: '100%', height: '100%' }}
+      >
+        <line
+          x1={shapePosition.x}
+          y1={shapePosition.y}
+          x2={lineEndX}
+          y2={lineEndY}
+          stroke="hsl(var(--primary))"
+          strokeWidth="2"
+          strokeDasharray="8 4"
+          opacity="0.7"
+        />
+        <circle
+          cx={shapePosition.x}
+          cy={shapePosition.y}
+          r="4"
+          fill="hsl(var(--primary))"
+        />
+      </svg>
+
       <div 
         ref={modalRef}
-        className="glass-panel rounded-xl p-6 w-80 animate-scale-in absolute"
+        className="glass-panel rounded-xl p-6 w-80 animate-scale-in fixed z-50"
         style={{ left: `${left}px`, top: `${top}px` }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold text-gradient">{name}</h2>
@@ -77,11 +102,11 @@ const InfoModal = ({ isOpen, onClose, name, description, position }: InfoModalPr
         
         <div className="mt-4 pt-3 border-t border-border">
           <p className="text-xs text-muted-foreground">
-            Click outside or press ESC to close
+            Press ESC or click X to close
           </p>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
