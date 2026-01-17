@@ -14,22 +14,55 @@ interface SelectedObject {
 }
 
 // Custom camera controls component
-const CameraControls = ({ selectedObject }: { selectedObject: SelectedObject | null }) => {
+const CameraControls = () => {
   const { camera, gl } = useThree();
   const isDragging = useRef(false);
+  const altPressed = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
-  const spherical = useRef({ theta: 0, phi: Math.PI / 2, radius: 8 });
+  // theta = horizontal rotation, cameraY = vertical position, phi = vertical rotation angle
+  const cameraState = useRef({ theta: 0, cameraY: 0, phi: Math.PI / 2, radius: 8 });
 
   const updateCamera = useCallback(() => {
-    const { theta, phi, radius } = spherical.current;
-    camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
-    camera.position.y = radius * Math.cos(phi);
-    camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
+    const { theta, cameraY, phi, radius } = cameraState.current;
+    
+    if (altPressed.current) {
+      // Alt mode: use spherical coords for full rotation
+      camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
+      camera.position.y = radius * Math.cos(phi);
+      camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
+    } else {
+      // Normal mode: horizontal rotation + vertical position offset
+      camera.position.x = radius * Math.sin(theta);
+      camera.position.y = cameraY;
+      camera.position.z = radius * Math.cos(theta);
+    }
     camera.lookAt(0, 0, 0);
   }, [camera]);
 
   useEffect(() => {
     const canvas = gl.domElement;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        altPressed.current = true;
+        // Sync phi from current camera Y position when entering alt mode
+        const { radius, cameraY } = cameraState.current;
+        cameraState.current.phi = Math.acos(Math.max(-1, Math.min(1, cameraY / radius)));
+        if (isNaN(cameraState.current.phi)) {
+          cameraState.current.phi = Math.PI / 2;
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        altPressed.current = false;
+        // Sync cameraY from phi when exiting alt mode
+        const { radius, phi } = cameraState.current;
+        cameraState.current.cameraY = radius * Math.cos(phi);
+        updateCamera();
+      }
+    };
 
     const handleMouseDown = (e: MouseEvent) => {
       if (e.button === 0 && !e.shiftKey) {
@@ -45,12 +78,18 @@ const CameraControls = ({ selectedObject }: { selectedObject: SelectedObject | n
       const deltaY = e.clientY - lastMouse.current.y;
       lastMouse.current = { x: e.clientX, y: e.clientY };
 
-      // Horizontal movement = rotate horizontally
-      spherical.current.theta += deltaX * 0.01;
+      // Horizontal drag = rotate horizontally (fixed direction)
+      cameraState.current.theta -= deltaX * 0.01;
 
-      // Vertical movement = move camera up/down (change phi)
-      spherical.current.phi -= deltaY * 0.01;
-      spherical.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.current.phi));
+      if (altPressed.current) {
+        // Alt + vertical drag = vertical rotation
+        cameraState.current.phi += deltaY * 0.01;
+        cameraState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraState.current.phi));
+      } else {
+        // Normal vertical drag = move camera up/down (fixed direction)
+        cameraState.current.cameraY += deltaY * 0.05;
+        cameraState.current.cameraY = Math.max(-10, Math.min(10, cameraState.current.cameraY));
+      }
 
       updateCamera();
     };
@@ -60,14 +99,16 @@ const CameraControls = ({ selectedObject }: { selectedObject: SelectedObject | n
     };
 
     const handleWheel = (e: WheelEvent) => {
-      spherical.current.radius += e.deltaY * 0.01;
-      spherical.current.radius = Math.max(3, Math.min(20, spherical.current.radius));
+      cameraState.current.radius += e.deltaY * 0.01;
+      cameraState.current.radius = Math.max(3, Math.min(20, cameraState.current.radius));
       updateCamera();
     };
 
     canvas.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
     canvas.addEventListener('wheel', handleWheel);
 
     updateCamera();
@@ -76,6 +117,8 @@ const CameraControls = ({ selectedObject }: { selectedObject: SelectedObject | n
       canvas.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
       canvas.removeEventListener('wheel', handleWheel);
     };
   }, [gl, updateCamera]);
@@ -222,7 +265,7 @@ const Scene3D = () => {
           />
           
           <Environment preset="city" />
-          <CameraControls selectedObject={selectedObject} />
+          <CameraControls />
         </Suspense>
       </Canvas>
       
@@ -274,9 +317,9 @@ const Scene3D = () => {
       
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 text-center">
         <p className="text-muted-foreground text-sm">
-          <span className="text-foreground font-medium">Left Click + Drag</span> to rotate/move • 
-          <span className="text-foreground font-medium"> Scroll</span> to zoom • 
-          <span className="text-foreground font-medium"> Click shapes</span> for info
+<span className="text-foreground font-medium">Drag</span> to rotate/move • 
+          <span className="text-foreground font-medium"> Alt + Drag</span> vertical rotation • 
+          <span className="text-foreground font-medium"> Scroll</span> to zoom
         </p>
       </div>
     </div>
