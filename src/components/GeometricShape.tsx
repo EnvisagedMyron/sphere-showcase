@@ -1,17 +1,20 @@
 import { useRef, useState } from 'react';
-import { Mesh } from 'three';
-import { useFrame } from '@react-three/fiber';
+import { Mesh, Vector3 } from 'three';
+import { useFrame, useThree } from '@react-three/fiber';
 
 interface GeometricShapeProps {
   type: 'sphere' | 'cube' | 'cylinder';
   position: [number, number, number];
   color: string;
-  onClick: () => void;
+  opacity?: number;
+  visible?: boolean;
+  onClick: (screenPosition: { x: number; y: number }) => void;
 }
 
-const GeometricShape = ({ type, position, color, onClick }: GeometricShapeProps) => {
+const GeometricShape = ({ type, position, color, opacity = 1, visible = true, onClick }: GeometricShapeProps) => {
   const meshRef = useRef<Mesh>(null);
   const [hovered, setHovered] = useState(false);
+  const { camera, gl } = useThree();
 
   useFrame((state) => {
     if (meshRef.current) {
@@ -22,7 +25,17 @@ const GeometricShape = ({ type, position, color, onClick }: GeometricShapeProps)
 
   const handleClick = (event: { stopPropagation: () => void }) => {
     event.stopPropagation();
-    onClick();
+    
+    if (meshRef.current) {
+      const vector = new Vector3();
+      meshRef.current.getWorldPosition(vector);
+      vector.project(camera);
+      
+      const x = (vector.x * 0.5 + 0.5) * gl.domElement.clientWidth;
+      const y = (-vector.y * 0.5 + 0.5) * gl.domElement.clientHeight;
+      
+      onClick({ x, y });
+    }
   };
 
   const getGeometry = () => {
@@ -37,6 +50,8 @@ const GeometricShape = ({ type, position, color, onClick }: GeometricShapeProps)
         return <boxGeometry args={[1, 1, 1]} />;
     }
   };
+
+  if (!visible) return null;
 
   return (
     <mesh
@@ -54,6 +69,8 @@ const GeometricShape = ({ type, position, color, onClick }: GeometricShapeProps)
         metalness={0.8}
         emissive={color}
         emissiveIntensity={hovered ? 0.4 : 0.1}
+        transparent={opacity < 1}
+        opacity={opacity}
       />
     </mesh>
   );
