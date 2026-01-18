@@ -6,11 +6,10 @@ interface InfoModalProps {
   onClose: () => void;
   name: string;
   description: string;
-  position: { x: number; y: number };
   shapePosition: { x: number; y: number };
 }
 
-const InfoModal = ({ isOpen, onClose, name, description, position, shapePosition }: InfoModalProps) => {
+const InfoModal = ({ isOpen, onClose, name, description, shapePosition }: InfoModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,17 +30,20 @@ const InfoModal = ({ isOpen, onClose, name, description, position, shapePosition
 
   if (!isOpen) return null;
 
-  // Calculate position with bounds checking
+  // Calculate position with bounds checking - offset more to not block shape
   const modalWidth = 320;
   const modalHeight = 200;
   const padding = 20;
+  const offsetX = 80; // Increased offset from shape
   
-  let left = position.x + 20;
-  let top = position.y - modalHeight / 2;
+  let left = shapePosition.x + offsetX;
+  let top = shapePosition.y - modalHeight / 2;
   
-  // Keep modal within viewport bounds
+  // Determine if modal should go left or right of shape
+  let modalOnRight = true;
   if (left + modalWidth > window.innerWidth - padding) {
-    left = position.x - modalWidth - 20;
+    left = shapePosition.x - modalWidth - offsetX;
+    modalOnRight = false;
   }
   if (top < padding) {
     top = padding;
@@ -52,7 +54,7 @@ const InfoModal = ({ isOpen, onClose, name, description, position, shapePosition
 
   // Calculate line connection point (center of modal edge closest to shape)
   const modalCenterY = top + modalHeight / 2;
-  const lineEndX = left < position.x ? left : left + modalWidth;
+  const lineEndX = modalOnRight ? left : left + modalWidth;
   const lineEndY = modalCenterY;
 
   return (
