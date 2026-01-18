@@ -40,7 +40,8 @@ const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
       camera.position.y = radius * Math.cos(phi);
       camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
     } else {
-      // Normal mode: horizontal rotation at fixed radius, vertical translate
+      // Normal mode: horizontal rotation + vertical TRANSLATION (Y-axis movement)
+      // Camera orbits horizontally at fixed radius on XZ plane, but Y is independent
       camera.position.x = radius * Math.sin(theta);
       camera.position.y = cameraY;
       camera.position.z = radius * Math.cos(theta);
@@ -54,22 +55,26 @@ const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Alt' && !altPressed.current) {
         altPressed.current = true;
-        // Calculate phi from current camera position to preserve view
-        const { radius, cameraY, theta } = cameraState.current;
-        // Clamp cameraY to valid range for acos
-        const clampedY = Math.max(-radius + 0.1, Math.min(radius - 0.1, cameraY));
-        cameraState.current.phi = Math.acos(clampedY / radius);
-        cameraState.current.basePhi = cameraState.current.phi;
-        cameraState.current.baseTheta = theta;
+        // Calculate phi from current camera Y position relative to origin
+        const { radius, cameraY } = cameraState.current;
+        // Get actual distance from origin to camera
+        const actualRadius = Math.sqrt(radius * radius + cameraY * cameraY);
+        // Clamp for acos
+        const clampedRatio = Math.max(-0.99, Math.min(0.99, cameraY / actualRadius));
+        cameraState.current.phi = Math.acos(clampedRatio);
+        cameraState.current.radius = actualRadius;
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Alt' && altPressed.current) {
         altPressed.current = false;
-        // Calculate cameraY from current phi to preserve view
-        const { radius, phi } = cameraState.current;
+        // Convert back: calculate cameraY from current phi and keep horizontal radius
+        const { radius, phi, theta } = cameraState.current;
         cameraState.current.cameraY = radius * Math.cos(phi);
+        // Recalculate horizontal radius (distance on XZ plane)
+        const horizontalRadius = radius * Math.sin(phi);
+        cameraState.current.radius = horizontalRadius > 0.5 ? horizontalRadius : 8;
         updateCamera();
       }
     };
@@ -100,13 +105,15 @@ const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
       cameraState.current.theta -= deltaX * 0.01;
 
       if (altPressed.current) {
-        // Alt + vertical drag = vertical rotation (change phi)
-        cameraState.current.phi += deltaY * 0.01;
+        // Alt + vertical drag = vertical rotation (change phi) - NON-INVERTED
+        // Moving mouse DOWN rotates camera DOWN (increases phi toward PI)
+        cameraState.current.phi -= deltaY * 0.01;
         cameraState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraState.current.phi));
       } else {
-        // Normal vertical drag = translate camera up/down (move cameraY)
-        cameraState.current.cameraY += deltaY * 0.03;
-        cameraState.current.cameraY = Math.max(-8, Math.min(8, cameraState.current.cameraY));
+        // Normal vertical drag = TRANSLATE camera on Y axis
+        // Mouse UP moves camera UP (positive Y), mouse DOWN moves camera DOWN (negative Y)
+        cameraState.current.cameraY -= deltaY * 0.05;
+        cameraState.current.cameraY = Math.max(-10, Math.min(10, cameraState.current.cameraY));
       }
 
       updateCamera();
@@ -177,6 +184,8 @@ const Scene3D = () => {
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [selectedShapeName, setSelectedShapeName] = useState<string | null>(null);
   const [shapeScreenPosition, setShapeScreenPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  // Store the fixed modal position (where popup was opened)
+  const [fixedModalPosition, setFixedModalPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [basicVisibility, setBasicVisibility] = useState([100]);
   const [pyramidVisibility, setPyramidVisibility] = useState([100]);
 
@@ -188,6 +197,8 @@ const Scene3D = () => {
     });
     setSelectedShapeName(name);
     setShapeScreenPosition(screenPosition);
+    // Fix the modal position at click time - it won't move with camera
+    setFixedModalPosition(screenPosition);
   };
 
   const closeModal = useCallback(() => {
@@ -331,6 +342,7 @@ const Scene3D = () => {
         name={selectedObject?.name || ''}
         description={selectedObject?.description || ''}
         shapePosition={shapeScreenPosition}
+        modalPosition={fixedModalPosition}
       />
       
       {/* Left side sliders */}
