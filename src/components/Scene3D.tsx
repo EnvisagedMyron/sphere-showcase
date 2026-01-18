@@ -9,29 +9,38 @@ import { Slider } from './ui/slider';
 interface SelectedObject {
   name: string;
   description: string;
-  position: { x: number; y: number };
-  shapePosition: { x: number; y: number };
+  shapeWorldPosition: Vector3;
 }
 
 // Custom camera controls component
-const CameraControls = () => {
+const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
   const { camera, gl } = useThree();
   const isDragging = useRef(false);
+  const hasMoved = useRef(false);
+  const mouseDownTime = useRef(0);
   const altPressed = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
-  // theta = horizontal rotation, cameraY = vertical position, phi = vertical rotation angle
-  const cameraState = useRef({ theta: 0, cameraY: 0, phi: Math.PI / 2, radius: 8 });
+  // theta = horizontal rotation, cameraY = vertical position, phi = vertical rotation angle (for alt mode)
+  const cameraState = useRef({ 
+    theta: 0, 
+    cameraY: 0, 
+    phi: Math.PI / 2, 
+    radius: 8,
+    // Store base values for alt mode transitions
+    baseTheta: 0,
+    basePhi: Math.PI / 2
+  });
 
   const updateCamera = useCallback(() => {
     const { theta, cameraY, phi, radius } = cameraState.current;
     
     if (altPressed.current) {
-      // Alt mode: use spherical coords for full rotation
+      // Alt mode: spherical coords for vertical rotation (phi controls up/down angle)
       camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
       camera.position.y = radius * Math.cos(phi);
       camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
     } else {
-      // Normal mode: horizontal rotation + vertical position offset
+      // Normal mode: horizontal rotation at fixed radius, vertical translate
       camera.position.x = radius * Math.sin(theta);
       camera.position.y = cameraY;
       camera.position.z = radius * Math.cos(theta);
@@ -43,21 +52,22 @@ const CameraControls = () => {
     const canvas = gl.domElement;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') {
+      if (e.key === 'Alt' && !altPressed.current) {
         altPressed.current = true;
-        // Sync phi from current camera Y position when entering alt mode
-        const { radius, cameraY } = cameraState.current;
-        cameraState.current.phi = Math.acos(Math.max(-1, Math.min(1, cameraY / radius)));
-        if (isNaN(cameraState.current.phi)) {
-          cameraState.current.phi = Math.PI / 2;
-        }
+        // Calculate phi from current camera position to preserve view
+        const { radius, cameraY, theta } = cameraState.current;
+        // Clamp cameraY to valid range for acos
+        const clampedY = Math.max(-radius + 0.1, Math.min(radius - 0.1, cameraY));
+        cameraState.current.phi = Math.acos(clampedY / radius);
+        cameraState.current.basePhi = cameraState.current.phi;
+        cameraState.current.baseTheta = theta;
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') {
+      if (e.key === 'Alt' && altPressed.current) {
         altPressed.current = false;
-        // Sync cameraY from phi when exiting alt mode
+        // Calculate cameraY from current phi to preserve view
         const { radius, phi } = cameraState.current;
         cameraState.current.cameraY = radius * Math.cos(phi);
         updateCamera();
@@ -67,6 +77,8 @@ const CameraControls = () => {
     const handleMouseDown = (e: MouseEvent) => {
       if (e.button === 0 && !e.shiftKey) {
         isDragging.current = true;
+        hasMoved.current = false;
+        mouseDownTime.current = Date.now();
         lastMouse.current = { x: e.clientX, y: e.clientY };
       }
     };
@@ -76,26 +88,40 @@ const CameraControls = () => {
 
       const deltaX = e.clientX - lastMouse.current.x;
       const deltaY = e.clientY - lastMouse.current.y;
+      
+      // Consider it moved if more than 3px
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+        hasMoved.current = true;
+      }
+      
       lastMouse.current = { x: e.clientX, y: e.clientY };
 
-      // Horizontal drag = rotate horizontally (fixed direction)
+      // Horizontal drag = rotate horizontally
       cameraState.current.theta -= deltaX * 0.01;
 
       if (altPressed.current) {
-        // Alt + vertical drag = vertical rotation
+        // Alt + vertical drag = vertical rotation (change phi)
         cameraState.current.phi += deltaY * 0.01;
         cameraState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraState.current.phi));
       } else {
-        // Normal vertical drag = move camera up/down (fixed direction)
-        cameraState.current.cameraY += deltaY * 0.05;
-        cameraState.current.cameraY = Math.max(-10, Math.min(10, cameraState.current.cameraY));
+        // Normal vertical drag = translate camera up/down (move cameraY)
+        cameraState.current.cameraY += deltaY * 0.03;
+        cameraState.current.cameraY = Math.max(-8, Math.min(8, cameraState.current.cameraY));
       }
 
       updateCamera();
     };
 
-    const handleMouseUp = () => {
+    const handleMouseUp = (e: MouseEvent) => {
+      const wasDragging = isDragging.current;
+      const didMove = hasMoved.current;
+      const duration = Date.now() - mouseDownTime.current;
       isDragging.current = false;
+      
+      // Single click (short, no movement) on void = close modal
+      if (wasDragging && !didMove && duration < 200) {
+        onVoidClick();
+      }
     };
 
     const handleWheel = (e: WheelEvent) => {
@@ -121,14 +147,36 @@ const CameraControls = () => {
       window.removeEventListener('keyup', handleKeyUp);
       canvas.removeEventListener('wheel', handleWheel);
     };
-  }, [gl, updateCamera]);
+  }, [gl, updateCamera, onVoidClick]);
 
+  return null;
+};
+
+// Component to track shape screen positions dynamically
+const ShapeScreenTracker = ({ 
+  worldPosition, 
+  onPositionUpdate 
+}: { 
+  worldPosition: Vector3; 
+  onPositionUpdate: (pos: { x: number; y: number }) => void;
+}) => {
+  const { camera, gl } = useThree();
+  
+  useFrame(() => {
+    const vector = worldPosition.clone();
+    vector.project(camera);
+    const x = (vector.x * 0.5 + 0.5) * gl.domElement.clientWidth;
+    const y = (-vector.y * 0.5 + 0.5) * gl.domElement.clientHeight;
+    onPositionUpdate({ x, y });
+  });
+  
   return null;
 };
 
 const Scene3D = () => {
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const [selectedShapeName, setSelectedShapeName] = useState<string | null>(null);
+  const [shapeScreenPosition, setShapeScreenPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [basicVisibility, setBasicVisibility] = useState([100]);
   const [pyramidVisibility, setPyramidVisibility] = useState([100]);
 
@@ -136,16 +184,16 @@ const Scene3D = () => {
     setSelectedObject({
       name,
       description: 'hello',
-      position: screenPosition,
-      shapePosition: screenPosition,
+      shapeWorldPosition: worldPosition.clone(),
     });
     setSelectedShapeName(name);
+    setShapeScreenPosition(screenPosition);
   };
 
-  const closeModal = () => {
+  const closeModal = useCallback(() => {
     setSelectedObject(null);
     setSelectedShapeName(null);
-  };
+  }, []);
 
   // Calculate visibility for basic shapes (sphere, cube, cylinder)
   const getBasicObjectState = (index: number): { opacity: number; visible: boolean } => {
@@ -265,7 +313,15 @@ const Scene3D = () => {
           />
           
           <Environment preset="city" />
-          <CameraControls />
+          <CameraControls onVoidClick={closeModal} />
+          
+          {/* Track selected shape position dynamically */}
+          {selectedObject && (
+            <ShapeScreenTracker 
+              worldPosition={selectedObject.shapeWorldPosition} 
+              onPositionUpdate={setShapeScreenPosition}
+            />
+          )}
         </Suspense>
       </Canvas>
       
@@ -274,8 +330,7 @@ const Scene3D = () => {
         onClose={closeModal}
         name={selectedObject?.name || ''}
         description={selectedObject?.description || ''}
-        position={selectedObject?.position || { x: 0, y: 0 }}
-        shapePosition={selectedObject?.shapePosition || { x: 0, y: 0 }}
+        shapePosition={shapeScreenPosition}
       />
       
       {/* Left side sliders */}
