@@ -6,10 +6,11 @@ interface InfoModalProps {
   onClose: () => void;
   name: string;
   description: string;
-  shapePosition: { x: number; y: number };
+  shapePosition: { x: number; y: number }; // Dynamic - updates as camera moves
+  modalPosition: { x: number; y: number }; // Fixed - set when modal opened
 }
 
-const InfoModal = ({ isOpen, onClose, name, description, shapePosition }: InfoModalProps) => {
+const InfoModal = ({ isOpen, onClose, name, description, shapePosition, modalPosition }: InfoModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,19 +31,19 @@ const InfoModal = ({ isOpen, onClose, name, description, shapePosition }: InfoMo
 
   if (!isOpen) return null;
 
-  // Calculate position with bounds checking - offset more to not block shape
+  // Modal position is FIXED based on where it was clicked - use modalPosition
   const modalWidth = 320;
   const modalHeight = 200;
   const padding = 20;
-  const offsetX = 80; // Increased offset from shape
+  const offsetX = 100; // Offset from original click position
   
-  let left = shapePosition.x + offsetX;
-  let top = shapePosition.y - modalHeight / 2;
+  let left = modalPosition.x + offsetX;
+  let top = modalPosition.y - modalHeight / 2;
   
-  // Determine if modal should go left or right of shape
+  // Determine if modal should go left or right based on original click position
   let modalOnRight = true;
   if (left + modalWidth > window.innerWidth - padding) {
-    left = shapePosition.x - modalWidth - offsetX;
+    left = modalPosition.x - modalWidth - offsetX;
     modalOnRight = false;
   }
   if (top < padding) {
@@ -52,7 +53,7 @@ const InfoModal = ({ isOpen, onClose, name, description, shapePosition }: InfoMo
     top = window.innerHeight - modalHeight - padding;
   }
 
-  // Calculate line connection point (center of modal edge closest to shape)
+  // Line connects from DYNAMIC shape position to FIXED modal position
   const modalCenterY = top + modalHeight / 2;
   const lineEndX = modalOnRight ? left : left + modalWidth;
   const lineEndY = modalCenterY;
