@@ -40,14 +40,17 @@ const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
       camera.position.y = radius * Math.cos(phi);
       camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
     } else {
-      // Normal mode: horizontal rotation + vertical TRANSLATION (Y-axis movement)
-      // Camera orbits horizontally at fixed radius on XZ plane, but Y is independent
+      // Normal mode: horizontal rotation + vertical TRANSLATION only
+      // Camera stays at fixed 'radius' distance on XZ plane, Y moves independently like an elevator
       camera.position.x = radius * Math.sin(theta);
       camera.position.y = cameraY;
       camera.position.z = radius * Math.cos(theta);
     }
+    // Always look at the center of the scene
     camera.lookAt(0, 0, 0);
   }, [camera]);
+  // Store the horizontal radius separately (fixed for normal mode, only zoom changes it)
+  const horizontalRadius = useRef(8);
 
   useEffect(() => {
     const canvas = gl.domElement;
@@ -55,26 +58,26 @@ const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Alt' && !altPressed.current) {
         altPressed.current = true;
-        // Calculate phi from current camera Y position relative to origin
-        const { radius, cameraY } = cameraState.current;
-        // Get actual distance from origin to camera
-        const actualRadius = Math.sqrt(radius * radius + cameraY * cameraY);
-        // Clamp for acos
-        const clampedRatio = Math.max(-0.99, Math.min(0.99, cameraY / actualRadius));
+        // Calculate phi from current camera position for alt mode
+        const { cameraY } = cameraState.current;
+        const currentHRadius = horizontalRadius.current;
+        // Compute the 3D distance from origin for spherical mode
+        const distance = Math.sqrt(currentHRadius * currentHRadius + cameraY * cameraY);
+        // Calculate phi angle from Y position
+        const clampedRatio = Math.max(-0.99, Math.min(0.99, cameraY / distance));
         cameraState.current.phi = Math.acos(clampedRatio);
-        cameraState.current.radius = actualRadius;
+        cameraState.current.radius = distance;
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Alt' && altPressed.current) {
         altPressed.current = false;
-        // Convert back: calculate cameraY from current phi and keep horizontal radius
-        const { radius, phi, theta } = cameraState.current;
+        // Convert spherical back to cylindrical: extract Y and restore fixed horizontal radius
+        const { radius, phi } = cameraState.current;
         cameraState.current.cameraY = radius * Math.cos(phi);
-        // Recalculate horizontal radius (distance on XZ plane)
-        const horizontalRadius = radius * Math.sin(phi);
-        cameraState.current.radius = horizontalRadius > 0.5 ? horizontalRadius : 8;
+        // Restore the fixed horizontal radius
+        cameraState.current.radius = horizontalRadius.current;
         updateCamera();
       }
     };
@@ -106,11 +109,10 @@ const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
 
       if (altPressed.current) {
         // Alt + vertical drag = vertical rotation (change phi) - NON-INVERTED
-        // Moving mouse DOWN rotates camera DOWN (increases phi toward PI)
         cameraState.current.phi -= deltaY * 0.01;
         cameraState.current.phi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraState.current.phi));
       } else {
-        // Normal vertical drag = TRANSLATE camera on Y axis
+        // Normal vertical drag = TRANSLATE camera on Y axis only
         // Mouse UP moves camera UP (positive Y), mouse DOWN moves camera DOWN (negative Y)
         cameraState.current.cameraY -= deltaY * 0.05;
         cameraState.current.cameraY = Math.max(-10, Math.min(10, cameraState.current.cameraY));
@@ -132,8 +134,10 @@ const CameraControls = ({ onVoidClick }: { onVoidClick: () => void }) => {
     };
 
     const handleWheel = (e: WheelEvent) => {
-      cameraState.current.radius += e.deltaY * 0.01;
-      cameraState.current.radius = Math.max(3, Math.min(20, cameraState.current.radius));
+      // Zoom affects the horizontal radius (distance from center on XZ plane)
+      horizontalRadius.current += e.deltaY * 0.01;
+      horizontalRadius.current = Math.max(3, Math.min(20, horizontalRadius.current));
+      cameraState.current.radius = horizontalRadius.current;
       updateCamera();
     };
 
